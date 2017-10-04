@@ -1,4 +1,4 @@
--- История изменения start_at по заказам с 1 марта 2017
+-- История изменения start_at	
 drop table if exists orders_hist;
 create temp table orders_hist as
 	with order_deltas as (
@@ -36,11 +36,10 @@ create temp table orders_hist as
 		field_value::timestamp - interval '3 hours' as start_at,
 		created_at as valid_from,
 		case
-			when lead(created_at,1) OVER (partition by order_id order by created_at) is null 
-				then '2020-01-01 00:00:00'::timestamp
+			when lead(created_at,1) OVER (partition by order_id order by created_at) is null then '2020-01-01 00:00:00'::timestamp
 			else lead(created_at,1) OVER (partition by order_id order by created_at)
 		end as valid_to
 	from shifts
 	)
-	
+
 	select * from order_shift_hist;

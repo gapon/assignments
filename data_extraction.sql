@@ -1,38 +1,10 @@
-with order_deltas as (
-	select
-		id,
-		model_id as order_id,
-		user_id,
-		json_array_elements(object)->>'name' as field_name,
-		json_array_elements(object)->>'object' as field_value,
-    json_array_elements(object)->>'action' as field_action,
-		created_at
-	from deltas
-	where model_type = 'Order'
-		and created_at >= '2017-04-01' -- чтобы быстрее работало
-    -- and [created_at = daterange_no_tz] -- так нельзя
-), assignes as (
-	select
-		order_id,
-		field_value::json ->> 'id' as master_id,
-		o.user_id,
-		case
-			when r.user_id is not null then 'admin'
-			when m.user_id is not null then 'master'
-			when o.user_id is not null then 'user'
-			else 'auto'
-		end as user_type,
-		o.created_at as assigned_at
-	from order_deltas o
-		left join users_roles r on (o.user_id = r.user_id and r.role_id = 1)
-		left join masters m on (o.user_id = m.user_id) -- r.role_id = 1, чтобы не задвайвалось
-	where field_name = 'cleaners'
-        and field_action != 'R' --чтобы не попадали удаления клинеров
-)
-
+-- 1. assignments_hist.sql
+-- 2. orders_hist.sql
+-- Время start_at на момент распределения заказа
 select
 	a.master_id,
 	o.rooms,
+	o.bathrooms,
 	o.total_time,
 	case
 		when type = 'lite' then 1
@@ -54,24 +26,37 @@ select
 		when need_vacuum_cleaner then 1
 		else 0
 	end as vacuum_flg,
-	extract(epoch from o.start_at - a.assigned_at)/3600 as hours_to_cln,
+	extract(epoch from s.start_at - a.created_at)/3600 as hours_to_cln,
+	
+	-- по идее широты и долготы должно хватить
+	-- можно попробовать квадраты-зоны
+	-- можно попробовать считать расстояния
 	ad.lat,
 	ad.lng,
-	extract(dow from start_at) as dow,
-	extract(hours from start_at) as hours,
+	
+	extract(dow from s.start_at) as dow,
+	extract(hours from s.start_at) as hours, 
+	
+	/*
 	case
-		when o.workflow_state in ('paid', 'checked_in', 'checked_out') and p.id is not null then 1 -- 'done'
-    	when o.workflow_state in ('paid', 'checked_in', 'checked_out') and p.id is null then 0 --'broken_by_cleaner'
-		when o.workflow_state = 'canceled' then 1 --'broken_by_user' 
-		else 1 --'in_progress'
+		when next_action = 'R' and a.master_id = a.next_act_master_id then 0 -- клинер сам отказался от заказа
+		when o.workflow_state in ('paid', 'checked_in', 'checked_out') and a.master_id = p.cleaner_id and (a.created_at - p.created_at) < interval '1 minute' then 1 -- заказа состоялся
+		when o.workflow_state = 'canceled' and a.master_id = p.cleaner_id and (a.created_at - p.created_at) < interval '1 minute' then 2 -- заказ отменился
+		when next_action = 'R' and next_act_user_type in ('admin', 'user') then 3 -- админ или юзер снял клинера или перенес заказ
+	end as assigne_state_details
+	*/
+	
+	case
+		when next_action = 'R' and a.master_id = a.next_act_master_id then 0
+		else 1
 	end as assigne_state
-from assignes a
+from assignments_hist a
+	left join orders_hist s on (a.order_id = s.order_id and a.created_at between s.valid_from and s.valid_to)
 	left join performers p on (a.master_id::integer = p.cleaner_id and a.order_id = p.order_id)
 	left join orders o on (a.order_id = o.id)
 	left join addresses ad on (o.address_id = ad.id)
-where user_type = 'auto'
-	and deal_id is null
+where --user_type = 'auto'
+	deal_id is null
 	and ad.lat is not null
 	and ad.lng is not null
-	and o.workflow_state in ('paid', 'checked_in', 'checked_out');
-	
+	and o.workflow_state in ('paid', 'checked_in', 'checked_out', 'canceled');

@@ -13,24 +13,39 @@ create temp table assignments_hist as
 		from deltas
 		where model_type = 'Order'
 			and created_at >= '2017-03-01' -- чтобы быстрее работало
-	), assignes as (
+	), cleaner_deltas as (
 		select
 			order_id,
 			field_action,
-			field_value::json ->> 'id' as master_id,
-			o.user_id,
+			(field_value::json ->> 'id')::int as master_id,
+			
+			o.user_id as act_user_id,
+			m.id as act_master_id,
+			
 			case
 				when r.user_id is not null then 'admin'
 				when m.user_id is not null then 'master'
 				when o.user_id is not null then 'user'
 				else 'auto'
-			end as user_type,
+			end as act_user_type,
 			o.created_at
 		from order_deltas o
 			left join users_roles r on (o.user_id = r.user_id and r.role_id = 1)
 			left join masters m on (o.user_id = m.user_id) -- r.role_id = 1, чтобы не задвайвалось
 		where field_name = 'cleaners'
-	        and field_action != 'R' --чтобы не попадали удаления клинеров
+	        --and field_action != 'R' --чтобы не попадали удаления клинеров
+	), assignes as (
+		select
+			*,
+			
+			lead(field_action,1) OVER (partition by order_id order by created_at) as next_action,
+			lead(master_id,1) OVER (partition by order_id order by created_at) as next_master_id,
+			lead(act_master_id,1) OVER (partition by order_id order by created_at) as next_act_master_id,
+			lead(act_user_id,1) OVER (partition by order_id order by created_at) as next_act_user_id,
+			lead(act_user_type,1) OVER (partition by order_id order by created_at) as next_act_user_type,
+			lead(created_at,1) OVER (partition by order_id order by created_at) as next_created_at
+		from cleaner_deltas
 	)
 	
-	select * from assignes;
+	select * from assignes
+	where field_action = 'A';
