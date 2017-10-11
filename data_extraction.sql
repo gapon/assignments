@@ -19,7 +19,7 @@ select
 		else 0
 	end as subscr_flg,
 	case
-		when keys_delivery is not null then 1
+		when keys_delivery then 1
 		else 0
 	end as keys_flg,
 	case
